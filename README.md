@@ -54,8 +54,8 @@ Currently powered by **Groq API** for advanced conversational generation, and us
      ```bash
      cp .env.example .env
      ```
-   - Edit `.env` and add your database credentials and **DeepSeek API Key**.
-   > **Note**: You can obtain a DeepSeek API key by signing up at [DeepSeek's API platform](https://platform.deepseek.com/).
+   - Edit `.env` and add your database credentials and **Groq API Key**.
+   > **Note**: You can obtain a DeepSeek API key by signing up at ([Get it here](https://console.groq.com)).
 
 5. **Run the Application:**
    ```bash
