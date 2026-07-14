@@ -81,16 +81,19 @@ Source: {item['source_type']}
                 conv_lines.append(f"Assistant: {ex['answer']}")
             conversation_context = "\n".join(conv_lines)
 
+        # If no lesson context is available, immediately return refusal
+        if not lesson_context:
+            return "Ang tubag wala makita sa gi-upload nga PDF."
+
         # --- BUILD PROMPT WITH FULL CONTEXT ---
-        if lesson_context and conversation_context:
+        if conversation_context:
             # Has both lesson AND conversation history
             prompt = f"""
 You are Manlayag, an AI tutor for Caraga State University.
 
 IMPORTANT RULES:
-1. Use BOTH the lesson context AND conversation history to answer.
-2. If the answer is NOT in the lesson context, say: 
-   "The lesson does not contain enough information to answer this question."
+1. Answer the current question strictly using ONLY the lesson context provided below. Do NOT use general knowledge or external information.
+2. If the answer cannot be found in the provided lesson context, you must reply exactly with: "Ang tubag wala makita sa gi-upload nga PDF." Do NOT make up, assume, or extrapolate any information.
 3. Do NOT include "Source:" or lesson titles in your answer.
 4. Do NOT use Markdown, bold, italic, bullet points, or numbering.
 5. Respond in plain text as one or two paragraphs.
@@ -103,31 +106,16 @@ LESSON CONTEXT:
 
 Current Question: {original_question}
 
-Answer based on the lesson context and conversation history. If this is a follow-up question, use the conversation history for context.
+Answer based ONLY on the lesson context. If the answer is not in the lesson context, reply exactly with: "Ang tubag wala makita sa gi-upload nga PDF."
 """
-        elif conversation_context and not lesson_context:
-            # Has conversation history but no lesson context
-            prompt = f"""
-You are Manlayag, an AI tutor for Caraga State University.
-
-CONVERSATION HISTORY:
-{conversation_context}
-
-Current Question: {original_question}
-
-Answer based on the conversation history and your general knowledge.
-Be helpful, friendly, and educational.
-Return ONLY the answer in plain text.
-"""
-        elif lesson_context and not conversation_context:
+        else:
             # Has lesson context but no history
             prompt = f"""
 You are Manlayag, an AI tutor for Caraga State University.
 
 IMPORTANT RULES:
-1. Answer using ONLY the lesson context provided.
-2. If the answer is NOT in the lesson context, say: 
-   "The lesson does not contain enough information to answer this question."
+1. Answer the current question strictly using ONLY the lesson context provided below. Do NOT use general knowledge or external information.
+2. If the answer cannot be found in the provided lesson context, you must reply exactly with: "Ang tubag wala makita sa gi-upload nga PDF." Do NOT make up, assume, or extrapolate any information.
 3. Do NOT include "Source:" or lesson titles.
 4. Do NOT use Markdown, bold, italic, bullet points, or numbering.
 5. Respond as one or two paragraphs.
@@ -139,33 +127,20 @@ Question: {original_question}
 
 Answer:
 """
-        else:
-            # No context at all - general conversation
-            prompt = f"""
-You are Manlayag, an AI tutor for Caraga State University.
-
-Have a helpful conversation with the user.
-Be friendly, educational, and encouraging.
-Return ONLY the answer in plain text.
-
-Question: {original_question}
-
-Answer:
-"""
 
         try:
             response = self.model.generate_content(prompt)
             if not response.text:
-                return "I couldn't generate a response. Please try again."
+                return "Ang tubag wala makita sa gi-upload nga PDF."
             
             answer = response.text.strip()
             
-            # If answer contains "not enough information", return exact message
-            if "does not contain enough information" in answer.lower():
-                return "The lesson does not contain enough information to answer this question."
+            # If answer contains refusal triggers, return exact message
+            if "does not contain enough information" in answer.lower() or "wala makita" in answer.lower():
+                return "Ang tubag wala makita sa gi-upload nga PDF."
             
             return answer
             
         except Exception as e:
             print("Gemini Error:", e)
-            return f"Error: {str(e)}"
+            return "Ang tubag wala makita sa gi-upload nga PDF."

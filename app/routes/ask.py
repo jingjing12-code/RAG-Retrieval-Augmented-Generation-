@@ -87,6 +87,7 @@ def ask():
         sources = []
 
         if chunks:
+            total_sim = 0.0
             for chunk in chunks:
                 context.append({
                     "content": chunk.content,
@@ -108,6 +109,11 @@ def ask():
                     "lesson_id": getattr(chunk, 'lesson_id', lesson_id),
                     "similarity": round(getattr(chunk, 'similarity', 0.0), 4)
                 })
+                total_sim += getattr(chunk, 'similarity', 0.0)
+            
+            avg_sim = total_sim / len(chunks)
+            if avg_sim < 0.35:
+                context = []
 
         #################################################
         # Generate Answer with FULL context
@@ -124,6 +130,9 @@ def ask():
         # Clean Formatting
         #################################################
         answer = clean_answer(answer)
+        
+        if "does not contain enough information" in answer.lower() or "wala makita" in answer.lower():
+            answer = "Ang tubag wala makita sa gi-upload nga PDF."
 
         #################################################
         # Save Conversation

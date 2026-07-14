@@ -11,4 +11,5 @@ PyMuPDF==1.23.8
 pytesseract==0.3.10
 pillow==10.1.0
 beautifulsoup4==4.12.2
-numpy==1.24.3waitress==3.0.2
+numpy==1.24.3
+waitress==3.0.2

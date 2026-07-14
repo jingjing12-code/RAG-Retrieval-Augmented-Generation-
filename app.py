@@ -27,14 +27,13 @@ db_name     = os.getenv('DB_NAME', 'surod_rag')
 db_user     = os.getenv('DB_USER', 'postgres')
 db_password = os.getenv('DB_PASSWORD', '')
 groq_key    = os.getenv('GROQ_API_KEY', '')
-
-GEN_MODEL = "openai/gpt-oss-120b"
+groq_model  = os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')  # ← FIXED: Use GROQ_MODEL
 
 print("=" * 60)
 print("Manlayag Starting...")
 print(f"DB  : {db_name} @ {db_host}:{db_port}")
-print(f"KEY : {'SET' if groq_key else 'MISSING'}")
-print(f"MODEL: {GEN_MODEL}")
+print(f"GROQ_KEY : {'SET' if groq_key else 'MISSING'}")
+print(f"GROQ_MODEL: {groq_model}")  # ← FIXED: Show actual model
 print("=" * 60)
 
 # ====================================================================
@@ -44,11 +43,11 @@ groq_client = None
 if groq_key:
     try:
         groq_client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
-        print("Groq configured OK")
+        print(f" Groq configured OK with model: {groq_model}")
     except Exception as e:
-        print(f"Groq client init FAILED: {e}")
+        print(f" Groq client init FAILED: {e}")
 else:
-    print("WARNING: No Groq API key in .env")
+    print(" WARNING: No Groq API key in .env")
 
 # ====================================================================
 # FLASK APP
@@ -118,9 +117,9 @@ with app.app_context():
             db.session.commit()
         except Exception:
             db.session.rollback()
-        print("Database tables ready")
+        print(" Database tables ready")
     except Exception as e:
-        print(f"DB error: {e}")
+        print(f" DB error: {e}")
 
 # ====================================================================
 # EMBEDDING SERVICE
@@ -130,9 +129,9 @@ _embed_model_singleton = None
 def get_embed_model():
     global _embed_model_singleton
     if _embed_model_singleton is None:
-        print("Loading local embedding model (first time only, please wait)...")
+        print(" Loading local embedding model (first time only, please wait)...")
         _embed_model_singleton = SentenceTransformer('sentence-transformers/all-mpnet-base-v2')
-        print("Embedding model loaded.")
+        print(" Embedding model loaded.")
     return _embed_model_singleton
 
 class EmbeddingService:
@@ -257,7 +256,7 @@ class ChunkingService:
                 'chunk_metadata': {'chunk_size': len(current)}
             })
 
-        print(f"Created {len(chunks)} chunks")
+        print(f" Created {len(chunks)} chunks")
         return chunks
 
 # ====================================================================
@@ -274,16 +273,18 @@ class RetrievalService:
 
         query_embedding = self.embedding_service.get_embedding(query)
         if not query_embedding:
-            print("No query embedding generated")
+            print(" No query embedding generated")
             return []
 
         sql = """
             SELECT lc.content, lc.chunk_metadata,
-                   l.title AS lesson_title, l.lesson_type AS source_type,
+                   l.title AS lesson_title, 
+                   l.lesson_type AS source_type,
                    l.course_id AS course_id,
                    l.lesson_id AS lesson_id,
                    l.file_name AS file_name,
                    l.source_url AS source_url,
+                   lc.chunk_index AS section,
                    1 - (lc.embedding <=> CAST(:emb AS vector)) AS similarity
             FROM lesson_chunks lc
             JOIN lessons l ON lc.lesson_id = l.id
@@ -306,10 +307,10 @@ class RetrievalService:
 
         try:
             rows = db.session.execute(db.text(sql), params).fetchall()
-            print(f"Found {len(rows)} relevant chunks")
+            print(f" Found {len(rows)} relevant chunks")
             return rows
         except Exception as e:
-            print(f"Search error: {e}")
+            print(f" Search error: {e}")
             return []
 
     def get_history(self, user_id, limit=20):
@@ -330,49 +331,51 @@ class RetrievalService:
         }
 
 # ====================================================================
-# GROQ SERVICE - FIXED WITH CONVERSATION HISTORY
+# GROQ SERVICE - FIXED
 # ====================================================================
 class GroqService:
     SYSTEM_PROMPT = """
 You are Manlayag, an AI tutor for Caraga State University.
 
 CRITICAL RULES:
-1. Prioritize using the provided Lesson Context to answer the question.
-2. If the answer cannot be found in the lesson context, or is only partially answered, use the conversation history and your general knowledge to provide a complete, helpful, and educational answer. Do NOT refuse to answer.
-3. NEVER include "Source:", lesson titles, or document types in your response.
-4. Do NOT use Markdown, bold, italic, bullet points, or numbering.
-5. Return ONLY the answer in plain text.
-
-For follow-up questions like "explain further", "give examples", "can you elaborate", use the conversation history to understand what the user is asking about and answer based on that topic.
+1. Answer the question directly using the lesson content provided.
+2. Start your answer with the main point or definition immediately.
+3. Do NOT use introductory phrases like "Based on my understanding", "Let me explain", etc.
+4. Use natural language with words like "because", "and", "for example".
+5. Do NOT use Markdown, bold, italic, bullet points, or numbering.
+6. Return ONLY the answer in plain text.
+7. If the answer is not in the lesson context, reply exactly with:
+   "The lesson does not contain enough information to answer this question."
 """
 
     def __init__(self):
         self.is_configured = bool(groq_client)
+        self.model = groq_model  # ← FIXED: Use groq_model
 
     def _chat(self, messages):
-        return groq_client.chat.completions.create(model=GEN_MODEL, messages=messages)
+        return groq_client.chat.completions.create(
+            model=self.model,  # ← FIXED: Use groq_model
+            messages=messages
+        )
 
     def rephrase_question(self, question, history):
         if not self.is_configured or not history:
             return question
 
-        # Build conversation history context
         hist_lines = []
-        # Use last 5 exchanges
         for m in history[-5:]:
             hist_lines.append(f"User: {m.get('question')}")
             hist_lines.append(f"Assistant: {m.get('answer')}")
         hist_str = "\n".join(hist_lines)
 
         prompt = f"""Given the following conversation history and a follow-up question, rephrase the follow-up question to be a standalone search query that contains all necessary context from the conversation. Do NOT answer the question, just return the rephrased query.
-If the question is already a standalone question and doesn't need context from history, or if it is a general question (like greetings or unrelated topics), just return the question as is.
 
 Conversation History:
 {hist_str}
 
 Follow-up Question: {question}
 
-Rephrased Search Query (return ONLY the rephrased query in plain text, do not add any quotes or labels):"""
+Rephrased Search Query (return ONLY the rephrased query in plain text):"""
         try:
             response = self._chat([
                 {"role": "system", "content": "You are a helpful assistant that rephrases follow-up questions into standalone search queries. Return only the rephrased query, nothing else."},
@@ -381,16 +384,16 @@ Rephrased Search Query (return ONLY the rephrased query in plain text, do not ad
             rephrased = response.choices[0].message.content.strip()
             rephrased = rephrased.strip('\'"').strip()
             if rephrased:
-                print(f"Rephrased '{question}' -> '{rephrased}'")
+                print(f" Rephrased '{question}' -> '{rephrased}'")
                 return rephrased
             return question
         except Exception as e:
-            print(f"Failed to rephrase question: {e}")
+            print(f" Failed to rephrase question: {e}")
             return question
 
     def generate_answer(self, question, context, history=None):
         if not self.is_configured:
-            return "AI not configured. Add GROQ_API_KEY to .env"
+            return "The lesson does not contain enough information to answer this question."
 
         # Build context string from lessons
         ctx_str = ""
@@ -401,48 +404,41 @@ Rephrased Search Query (return ONLY the rephrased query in plain text, do not ad
         hist_str = ""
         if history and len(history) > 0:
             hist_lines = []
-            # Get last 5 exchanges for context
             last_exchanges = history[-5:] if len(history) > 5 else history
             for m in last_exchanges:
                 hist_lines.append(f"User: {m.get('question')}")
                 hist_lines.append(f"Assistant: {m.get('answer')}")
             hist_str = "\n".join(hist_lines)
 
-        # Build prompt based on available context
-        if ctx_str and hist_str:
-            # Has both lesson context AND conversation history
-            prompt = f"""Lesson Context:
-{ctx_str}
+        # If no lesson context is available, return the exact message
+        if not ctx_str or len(ctx_str.strip()) < 50:
+            return "The lesson does not contain enough information to answer this question."
 
-Conversation History:
-{hist_str}
-
-Current Question: {question}
-
-Answer based on the lesson context. If the question is a follow-up or is not fully covered by the context, use the conversation history and your general knowledge to answer it completely."""
-        elif ctx_str:
-            # Only lesson context
-            prompt = f"""Lesson Context:
-{ctx_str}
-
-Question: {question}
-
-Answer based on the lesson context. If the answer is not in the context, use your general knowledge to provide a helpful answer."""
-        elif hist_str:
-            # Only conversation history - keep the conversation going
-            prompt = f"""Conversation History:
-{hist_str}
-
-Current Question: {question}
-
-Continue the conversation based on the history. Be helpful and educational. 
-Return ONLY the answer in plain text."""
+        # Build prompt
+        if hist_str:
+            prompt = (
+                "Lesson Context:\n"
+                f"{ctx_str}\n\n"
+                "Conversation History:\n"
+                f"{hist_str}\n\n"
+                "Question:\n"
+                f"{question}\n\n"
+                "Give a direct answer to the question. Start with the main point immediately. "
+                "Do not use any introductory phrases. "
+                "If the answer is not in the context, reply exactly with: "
+                '"The lesson does not contain enough information to answer this question."'
+            )
         else:
-            # No context at all - general conversation
-            prompt = f"""Question: {question}
-
-Answer based on general knowledge. Be helpful, friendly, and educational.
-Return ONLY the answer in plain text."""
+            prompt = (
+                "Lesson Context:\n"
+                f"{ctx_str}\n\n"
+                "Question:\n"
+                f"{question}\n\n"
+                "Give a direct answer to the question. Start with the main point immediately. "
+                "Do not use any introductory phrases. "
+                "If the answer is not in the context, reply exactly with: "
+                '"The lesson does not contain enough information to answer this question."'
+            )
 
         try:
             response = self._chat([
@@ -451,11 +447,12 @@ Return ONLY the answer in plain text."""
             ])
             
             answer = response.choices[0].message.content
-            
-            # Clean the answer
             answer = self._clean_answer(answer)
             
             if not answer or not answer.strip():
+                return "The lesson does not contain enough information to answer this question."
+            
+            if "does not contain enough information" in answer.lower():
                 return "The lesson does not contain enough information to answer this question."
             
             return answer.strip()
@@ -465,43 +462,7 @@ Return ONLY the answer in plain text."""
             print(traceback.format_exc())
             return "The lesson does not contain enough information to answer this question."
 
-    def generate_answer_without_context(self, question, history=None):
-        if not self.is_configured:
-            return "AI not configured."
-        
-        hist_str = ""
-        if history and len(history) > 0:
-            hist_lines = []
-            for m in history[-5:]:
-                hist_lines.append(f"User: {m.get('question')}")
-                hist_lines.append(f"Assistant: {m.get('answer')}")
-            hist_str = "\n".join(hist_lines)
-            
-            prompt = f"""Conversation History:
-{hist_str}
-
-Current Question: {question}
-
-Answer the current question directly based on general knowledge and conversation history. Be helpful, friendly, and educational. Do NOT say you don't have enough information.
-Return ONLY the answer in plain text."""
-        else:
-            prompt = f"""Question: {question}
-
-Answer the question directly based on general knowledge. Be helpful, friendly, and educational. Do NOT say you don't have enough information.
-Return ONLY the answer in plain text."""
-
-        try:
-            response = self._chat([
-                {"role": "system", "content": "You are a helpful AI tutor for Caraga State University. Answer the question directly using general knowledge. Do not use markdown or list formatting."},
-                {"role": "user", "content": prompt}
-            ])
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            print(f"Fallback generation failed: {e}")
-            return "I apologize, but I could not generate a response. Please try asking again."
-
     def _clean_answer(self, answer):
-        """Remove any source references, citations, or extra formatting."""
         import re
         
         answer = re.sub(r'\[Source:.*?\]', '', answer)
@@ -510,11 +471,6 @@ Return ONLY the answer in plain text."""
         answer = re.sub(r'^[\s]*[-*•]\s*', '', answer, flags=re.MULTILINE)
         answer = re.sub(r'\n\s*\n', '\n\n', answer)
         answer = answer.strip()
-        
-        if "does not contain enough information" in answer.lower():
-            match = re.search(r'The lesson does not contain enough information to answer this question\.', answer, re.IGNORECASE)
-            if match:
-                return match.group(0)
         
         return answer
 
@@ -618,7 +574,12 @@ def serve_upload(filename):
 @app.route('/api/status', methods=['GET'])
 def get_status():
     stats = RetrievalService().get_stats()
-    return jsonify({'status': 'ok', 'system': 'Manlayag Assistant', **stats})
+    return jsonify({
+        'status': 'ok', 
+        'system': 'Manlayag Assistant',
+        'model': groq_model,
+        **stats
+    })
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -641,7 +602,7 @@ def health_check():
     if groq_client is not None:
         try:
             r = groq_client.chat.completions.create(
-                model=GEN_MODEL,
+                model=groq_model,
                 messages=[{"role": "user", "content": "Say OK."}]
             )
             gen_ok = bool(r.choices[0].message.content)
@@ -652,12 +613,13 @@ def health_check():
         'status': 'healthy' if (db_ok and embed_ok and gen_ok) else 'degraded',
         'database': 'connected' if db_ok else 'disconnected',
         'groq_key': 'configured' if groq_key else 'not configured',
+        'groq_model': groq_model,
         'embedding_model': {'name': 'all-mpnet-base-v2 (local)', 'working': embed_ok, 'error': embed_err},
-        'generation_model': {'name': GEN_MODEL, 'working': gen_ok, 'error': gen_err}
+        'generation_model': {'name': groq_model, 'working': gen_ok, 'error': gen_err}
     })
 
 # ====================================================================
-# /api/ask - MAIN ROUTE WITH CONVERSATION HISTORY
+# /api/ask - MAIN ROUTE
 # ====================================================================
 @app.route('/api/ask', methods=['POST'])
 def ask():
@@ -674,8 +636,9 @@ def ask():
             return jsonify({'error': 'question is required'}), 400
 
         print("\n" + "="*60)
-        print(f"QUESTION: {question}")
-        print(f"USER: {user_id}")
+        print(f" QUESTION: {question}")
+        print(f" USER: {user_id}")
+        print(f" MODEL: {groq_model}")
         print("="*60)
 
         retrieval = RetrievalService()
@@ -686,16 +649,14 @@ def ask():
         history = []
         
         if history_objects:
-            # Reverse to show chronological order (oldest first)
             for h in reversed(history_objects):
                 history.append({
                     'question': h.question,
                     'answer': h.answer
                 })
-            print(f"\nFound {len(history)} history entries")
-            print(f"Last Q: {history[-1]['question'] if history else 'None'}")
+            print(f"\n Found {len(history)} history entries")
         else:
-            print("\nNo history found")
+            print("\n No history found")
 
         # --- REPHRASE QUESTION FOR RETRIEVAL IF HISTORY EXISTS ---
         search_query = question
@@ -711,56 +672,68 @@ def ask():
 
         if chunks:
             total_sim = 0.0
+            seen_lessons = set()
+            
             for chunk in chunks:
+                chunk_index = getattr(chunk, 'section', 0)
+                section_name = f"Section {chunk_index + 1}" if chunk_index is not None else "General"
+                
+                lesson_key = f"{chunk.lesson_title}_{chunk.source_type}"
+                
+                if lesson_key in seen_lessons:
+                    continue
+                seen_lessons.add(lesson_key)
+                
                 context.append({
                     'content': chunk.content,
                     'lesson_title': chunk.lesson_title,
-                    'source_type': chunk.source_type
+                    'source_type': chunk.source_type,
+                    'section': section_name
                 })
                 
-                # Build correct URL and source fields for the frontend references
+                # --- BUILD DETAILED REFERENCES ---
                 file_name = getattr(chunk, 'file_name', None)
                 source_url = getattr(chunk, 'source_url', None)
+                course_id_val = getattr(chunk, 'course_id', course_id)
+                lesson_id_val = getattr(chunk, 'lesson_id', lesson_id)
+                
+                # Build URL based on source type
                 ref_url = None
                 if chunk.source_type == 'pdf' and file_name:
                     ref_url = f"/upload/{file_name}"
                 elif chunk.source_type == 'video' and source_url:
                     ref_url = source_url
-
+                elif chunk.source_type == 'text' and lesson_id_val:
+                    ref_url = f"/api/documents?lesson_id={lesson_id_val}"
+                
                 references.append({
+                    "course_id": course_id_val,
+                    "lesson_id": lesson_id_val,
                     "lesson": chunk.lesson_title,
-                    "type": chunk.source_type,
-                    "source": chunk.source_type,  # Expected by frontend 'typeIcon(r.source)'
-                    "url": ref_url,                # Expected by frontend 'r.url'
-                    "course_id": getattr(chunk, 'course_id', course_id),
-                    "lesson_id": getattr(chunk, 'lesson_id', lesson_id),
+                    "source_type": chunk.source_type,
+                    "source": chunk.source_type,
+                    "section": section_name,
+                    "chunk_index": chunk_index,
+                    "url": ref_url,
+                    "file_name": file_name,
                     "similarity": round(getattr(chunk, 'similarity', 0.0), 4)
                 })
                 total_sim += getattr(chunk, 'similarity', 0.0)
             
-            avg_sim = total_sim / len(chunks)
+            avg_sim = total_sim / len(chunks) if chunks else 0.0
             
-            # If similarity is good, use context
-            if avg_sim >= 0.35:
-                print(f"\nUsing lesson context (similarity: {avg_sim:.4f})")
-                answer = ai_service.generate_answer(question, context, history)
-            else:
-                print(f"\nLow similarity ({avg_sim:.4f}), using history")
-                if history:
-                    answer = ai_service.generate_answer(question, [], history)
-                else:
-                    answer = ai_service.generate_answer(question, [], [])
+            print(f"\n Using lesson context (similarity: {avg_sim:.4f})")
+            answer = ai_service.generate_answer(question, context, history)
+            
         else:
-            print("\nNo chunks found, using history or general knowledge")
-            if history:
-                answer = ai_service.generate_answer(question, [], history)
-            else:
-                answer = ai_service.generate_answer(question, [], [])
+            print("\n No chunks found")
+            answer = "The lesson does not contain enough information to answer this question."
+            references = []
 
         # --- FINAL CLEANUP ---
         if "does not contain enough information" in answer.lower():
-            print("Answer contained refusal, falling back to general knowledge generation...")
-            answer = ai_service.generate_answer_without_context(question, history)
+            answer = "The lesson does not contain enough information to answer this question."
+            references = []
 
         # Clean the answer
         answer = clean_answer_text(answer)
@@ -785,17 +758,10 @@ def ask():
         return jsonify({
             'answer': answer,
             'references': references[:5] if references else [],
-            'sources': [{
-                'title': ref['lesson'],
-                'type': ref['type'],
-                'course_id': ref['course_id'],
-                'lesson_id': ref['lesson_id'],
-                'similarity': ref['similarity']
-            } for ref in references[:5]] if references else [],
             'confidence': round(avg_sim, 4) if avg_sim > 0 else 0.0,
             'topic': topic_label,
             'chunks_used': len(chunks) if chunks else 0,
-            'has_context': bool(chunks and avg_sim >= 0.35),
+            'has_context': bool(chunks),
             'has_history': bool(history),
             'history_used': len(history) if history else 0,
             'response_time': round(time.time() - t0, 2)
@@ -810,7 +776,7 @@ def ask():
 def clean_answer_text(answer):
     """Clean the answer text"""
     if not answer:
-        return "I could not generate a response. Please try again."
+        return "The lesson does not contain enough information to answer this question."
     
     # Remove markdown
     answer = re.sub(r'\*\*(.*?)\*\*', r'\1', answer)
@@ -828,6 +794,10 @@ def clean_answer_text(answer):
     # Clean whitespace
     answer = answer.replace('\n', ' ')
     answer = re.sub(r'\s+', ' ', answer).strip()
+    
+    # Check if answer contains the refusal message
+    if "does not contain enough information" in answer.lower():
+        return "The lesson does not contain enough information to answer this question."
     
     return answer
 
@@ -878,11 +848,11 @@ def ingest_pdf():
         with open(path, 'wb') as f:
             f.write(data)
 
-        print(f"\nIngesting PDF: {filename} ({size} bytes)")
+        print(f"\n Ingesting PDF: {filename} ({size} bytes)")
         text = PDFParser().extract_text(path)
         if not text.strip():
             return jsonify({'error': 'No text extracted from PDF'}), 400
-        print(f"Extracted {len(text)} characters")
+        print(f" Extracted {len(text)} characters")
 
         result, err = process_and_store(
             course_id, lesson_id, title, 'pdf', text,
@@ -1000,6 +970,7 @@ if __name__ == '__main__':
     print("Server is running!")
     print(f"Local:   http://localhost:8000")
     print(f"Network: http://{local_ip}:8000")
+    print(f"Model:   {groq_model}")
     print("==============================================\n")
 
     from waitress import serve
