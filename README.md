@@ -1,8 +1,8 @@
-# RAG-Retrieval-Augmented-Generation-
+# RAG-Retrieval-Augmented-Generation
 
 An AI-powered educational assistant that uses Retrieval-Augmented Generation (RAG) to answer questions based only on uploaded learning materials such as PDF lessons, text documents, and lecture transcripts.
 
-The system retrieves the most relevant lesson content using vector search before generating an answer with Google's Gemini API, allowing students to ask follow-up questions naturally while keeping responses grounded in the uploaded lessons.
+The system retrieves the most relevant lesson content using vector search before generating an answer with Groq's high-performance models, allowing students to ask follow-up questions naturally while keeping responses grounded in the uploaded lessons.
 
 ---
 
@@ -11,13 +11,16 @@ The system retrieves the most relevant lesson content using vector search before
 - Conversational RAG
 - PDF Lesson Ingestion
 - Text Lesson Ingestion
+- Video Transcript Ingestion
 - Automatic Text Chunking
 - Vector Embeddings using SentenceTransformers
 - PostgreSQL + pgvector
-- Gemini 1.5 Flash Integration
+- **Groq API Integration** (llama-3.1-8b-instant)
 - Conversation History
 - Follow-up Question Understanding
 - Semantic Search
+- Clickable Source References
+- Similarity Threshold Filtering
 - REST API
 - Flask Backend
 - HTML, CSS and JavaScript Frontend
@@ -33,165 +36,9 @@ The system retrieves the most relevant lesson content using vector search before
 | Vector Database | pgvector |
 | ORM | SQLAlchemy |
 | Embeddings | SentenceTransformers (all-mpnet-base-v2) |
-| Large Language Model | Gemini 1.5 Flash |
+| **Large Language Model** | **Groq API (llama-3.1-8b-instant)** |
 | Frontend | HTML, CSS, JavaScript |
 
 ---
 
 ## Project Structure
-
-```
-app/
-│
-├── models/
-├── routes/
-├── services/
-│   ├── embedding.py
-│   ├── retrieval.py
-│   └── gemini.py
-│
-├── static/
-├── templates/
-│
-app.py
-config.py
-requirements.txt
-```
-
----
-
-## Installation
-
-### Clone Repository
-
-```bash
-git clone https://github.com/jingjing12-code/RAG-Retrieval-Augmented-Generation-.git
-```
-
-```bash
-cd RAG-Retrieval-Augmented-Generation-
-```
-
----
-
-### Create Virtual Environment
-
-Windows
-
-```bash
-python -m venv venv
-```
-
-Activate
-
-```bash
-venv\Scripts\activate
-```
-
----
-
-### Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-### Configure Environment Variables
-
-Create a `.env` file.
-
-Example
-
-```env
-GEMINI_API_KEY=YOUR_GEMINI_API_KEY
-
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=surod_rag
-DB_USER=postgres
-DB_PASSWORD=your_password
-```
-
----
-
-### Run
-
-```bash
-python app.py
-```
-
-Server
-
-```
-http://localhost:8000
-```
-
----
-
-## API Endpoints
-
-### Ask Question
-
-```
-POST /api/ask
-```
-
-### Upload PDF
-
-```
-POST /api/ingest/pdf
-```
-
-### Upload Text
-
-```
-POST /api/ingest/text
-```
-
-### Upload Transcript
-
-```
-POST /api/ingest/video
-```
-
-### List Documents
-
-```
-GET /api/documents
-```
-
-### System Status
-
-```
-GET /api/status
-```
-
----
-
-## Conversational RAG Workflow
-
-1. User asks a question.
-2. The system retrieves previous conversation history.
-3. Follow-up questions are rewritten into standalone questions.
-4. The embedding model converts the rewritten question into a vector.
-5. PostgreSQL with pgvector searches for the most relevant lesson chunks.
-6. Retrieved lesson chunks are sent to Gemini.
-7. Gemini generates an answer using only the retrieved lesson context.
-8. The conversation is stored for future follow-up questions.
-
----
-
-## Requirements
-
-- Python 3.10+
-- PostgreSQL
-- pgvector
-- Google Gemini API Key
-
----
-
-## License
-
-This project is licensed under the MIT License.
