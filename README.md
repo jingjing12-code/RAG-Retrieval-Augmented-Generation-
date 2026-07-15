@@ -223,7 +223,7 @@ GET /api/status
 8. If the answer is not found in the uploaded lessons, the assistant responds:
 
 ```
-Ang tubag wala makita sa gi-upload nga PDF.
+"The lesson does not contain enough information to answer this question.".
 ```
 
 9. The conversation is stored for future follow-up questions.
